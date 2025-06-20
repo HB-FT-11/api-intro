@@ -3,6 +3,20 @@
 header('Content-Type: application/json; charset=UTF-8');
 header('Access-Control-Allow-Origin: http://127.0.0.1:5500');
 
+// Gestionnaire d'erreurs globales
+// Fonction qui sera lancée en cas d'erreur imprévue
+set_exception_handler(function (Throwable $ex) {
+    // Logs
+    file_put_contents('errors/error'.uniqid().'.txt', $ex->getMessage());
+
+    http_response_code(500);
+    echo json_encode([
+        'status' => 'internal server error',
+        'message' => 'An unexpected error has occured, please try again later'
+    ]);
+    exit;
+});
+
 const SUPPORTED_RESOURCES = ["users"];
 
 require_once 'db.php';
@@ -50,8 +64,8 @@ if ($resource === 'users' && $id === null && $_SERVER['REQUEST_METHOD'] === 'GET
     echo json_encode($users);
 }
 
-// Endpoint : item utilisateur
-if ($resource === "users" && $id !== null) {
+// Endpoint : item utilisateur lecture : GET /users/{id}
+if ($resource === "users" && $id !== null && $_SERVER['REQUEST_METHOD'] === 'GET') {
     // Requête
     $stmt = $pdo->prepare("SELECT * FROM users WHERE id=:id");
     $stmt->execute(['id' => $id]);
@@ -76,6 +90,8 @@ if ($resource === "users" && $id !== null) {
     echo json_encode($user);
 }
 
+const REQUIRED_FIELDS = ["name", "firstname", "email"];
+
 // Endpoint : création d'utilisateur : /users, méthode POST
 if ($resource === 'users' && $id === null && $_SERVER["REQUEST_METHOD"] === "POST") {
     // Demande à PHP le contenu du corps de la requête
@@ -85,7 +101,26 @@ if ($resource === 'users' && $id === null && $_SERVER["REQUEST_METHOD"] === "POS
     // Pour en faire un tableau associatif
     $data = json_decode($body, true);
 
-    // TODO: VALIDATION DES DONNÉES
+    foreach (REQUIRED_FIELDS as $field) {
+        if (!isset($data[$field]) || empty(trim($data[$field]))) {
+            http_response_code(400); // 400 Bad Request
+            echo json_encode([
+                'status' => 'invalid data',
+                'message' => $field . ' is required'
+            ]);
+            exit;
+        }
+    }
+
+    // Validation email
+    if (filter_var($data['email'], FILTER_VALIDATE_EMAIL) === false) {
+        http_response_code(400); // 400 Bad Request
+        echo json_encode([
+            'status' => 'invalid data',
+            'message' => 'email is invalid'
+        ]);
+        exit;
+    }
 
     $stmt = $pdo->prepare("INSERT INTO users (name, firstname, email) VALUES (:name, :firstname, :email)");
     $stmt->execute([
@@ -94,50 +129,31 @@ if ($resource === 'users' && $id === null && $_SERVER["REQUEST_METHOD"] === "POS
         'email' => $data['email']
     ]);
 
+    // Récupère l'ID du dernier enregistrement inséré en BDD
     $id = intval($pdo->lastInsertId());
 
+    // Reconstruit $data en y indiquant une clé 'uri', une clé 'id',
+    // et le contenu initial de $data lui-même (avec le spread operator)
     $data = [
         'uri' => '/users/' . $id,
         'id' => $id,
         ...$data
     ];
 
-    http_response_code(201);
+    http_response_code(201); // 201 Created
     echo json_encode($data);
-
-    // if (empty($name) || empty($firstname) || (filter_var($email, FILTER_VALIDATE_EMAIL))) {
-    //     http_response_code(404);
-    //     echo json_encode([
-    //         'status' => 'Not found',
-    //         'message' => 'Empty data or unvalid email'
-    //     ]);
-    //     exit;
-    // } else {
-    //     $stmt = $pdo->prepare("INSERT INTO users (name, firstname, email) VALUES (:name, :firstname, :email");
-    //     $stmt->execute([
-    //         'name' => $name,
-    //         'firstname' => $firstname,
-    //         'email' => $email
-    //     ]);
-
-    //     $user['uri'] = '/users/';
-    //     echo json_encode($user);
-    // }
 }
 
-// if ($_SERVER["REQUEST_URI"] == "DELETE") {
-//     $id = $_DELETE['id'];
-//     if (empty($id)) {
-//         http_response_code(404);
-//         echo json_encode([
-//             'status' => 'Not found',
-//             'message' => 'Empty id'
-//         ]);
-//         exit;
-//     } else {
-//         $stmt = $pdo->prepare("DELETE FROM users WHERE id=:id");
-//         $stmt->execute(['id' => $id]);
-//     }
-//     $user['uri'] = '/users/';
-//     echo json_encode($user);
-// }
+// Ednpoint : suppression d'utilisateur : /users/{id}, méthode DELETE
+if ($resource === 'users' && $id !== null && $_SERVER['REQUEST_METHOD'] === "DELETE") {
+    $stmt = $pdo->prepare("DELETE FROM users WHERE id=:id");
+    $stmt->execute(['id' => $id]);
+
+    http_response_code(204); // 204 No Content
+}
+
+http_response_code(404);
+echo json_encode([
+    'status' => 'not found',
+    'message' => 'Operation not supported'
+]);
